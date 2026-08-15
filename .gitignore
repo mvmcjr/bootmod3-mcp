@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+# Environment — holds the bootmod3 bearer + access tokens
+.env
+
+# Raw curl captures from the bootmod3 web app. Contains live Auth0 bearer and
+# session JWTs in plaintext — never commit.
+methods.md
+
+# Cached ECU map trees and datalogs. Several hundred MB, and the map payloads
+# carry the vehicle's VIN and ROM identifiers.
+cache/
+mapdata_response.json
