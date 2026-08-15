@@ -6,6 +6,17 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import { DEFAULT_TIERS, compareMaps, type CompareResult, type MatchTier, type TableDiff } from "./compare.js";
+import {
+  parseDatalogCsv,
+  parseHighlights,
+  removeHighlight,
+  resolveColumn,
+  serializeHighlights,
+  splitColumn,
+  type DatalogHighlight,
+  type ParsedDatalog,
+} from "./datalog.js";
+import { buildTreeText, flattenNodes, type TableTreeResponse } from "./tree.js";
 
 const BASE_URL = "https://www.bootmod3.net";
 const TOKEN = process.env.BOOTMOD3_token;           // localStorage "token" → Authorization header
@@ -98,46 +109,6 @@ async function apiFetch(url: string, init: RequestInit): Promise<Response> {
   return res;
 }
 
-interface TableDef {
-  id: string;
-  extId: string;
-  name: string;
-  units?: string;
-  hasXAxis: boolean;
-  hasYAxis: boolean;
-  xAxisName?: string;
-  yAxisName?: string;
-  xAxisUnits?: string;
-  yAxisUnits?: string;
-  min: number;
-  max: number;
-  columns: string;
-  rows: string;
-}
-
-interface TableEntry {
-  def: TableDef & Record<string, unknown>;
-  rows: Array<{ values: number[] }>;
-  hAxis: { values: number[] };
-  vAxis: { values: number[] };
-}
-
-interface TreeNode {
-  uid: number;
-  name: string;
-  total: number;
-  nodes?: TreeNode[];
-  tables?: TableDef[];
-}
-
-interface TableTreeResponse {
-  mapId: string;
-  engineType: string;
-  total: number;
-  nodes: TreeNode[];
-  tableData: Record<string, TableEntry>;
-}
-
 async function fetchTableTree(mapId: string): Promise<TableTreeResponse> {
   if (treeCache.has(mapId)) return treeCache.get(mapId)!;
 
@@ -161,28 +132,6 @@ async function fetchTableTree(mapId: string): Promise<TableTreeResponse> {
   return data;
 }
 
-interface FlatTable {
-  id: string;
-  name: string;
-  extId: string;
-  path: string;
-  units?: string;
-  hasXAxis: boolean;
-  hasYAxis: boolean;
-}
-
-function flattenNodes(nodes: TreeNode[], path = ""): FlatTable[] {
-  const out: FlatTable[] = [];
-  for (const node of nodes) {
-    const p = path ? `${path} > ${node.name}` : node.name;
-    for (const t of node.tables ?? []) {
-      out.push({ id: t.id, name: t.name, extId: t.extId, path: p, units: t.units, hasXAxis: t.hasXAxis, hasYAxis: t.hasYAxis });
-    }
-    out.push(...flattenNodes(node.nodes ?? [], p));
-  }
-  return out;
-}
-
 interface DatalogListEntry {
   id: string;
   userId: string;
@@ -190,21 +139,6 @@ interface DatalogListEntry {
   createdDate: string;
   duration: number;
   lineCount: number;
-}
-
-interface ParsedDatalog {
-  id: string;
-  columns: string[]; // columns[0] is always the Time channel (seconds)
-  rows: number[][];
-}
-
-interface DatalogHighlight {
-  uid: string;
-  time: number;
-  column?: string;
-  value?: number;
-  note: string;
-  createdAt: string;
 }
 
 function datalogCsvPath(id: string): string {
@@ -217,31 +151,6 @@ function datalogHighlightsPath(id: string): string {
 
 function isDatalogCached(id: string): boolean {
   return datalogCache.has(id) || fs.existsSync(datalogCsvPath(id));
-}
-
-// bootmod3's CSV header sometimes has trailing metadata tokens (app version, log hash)
-// that don't correspond to real data columns — trim the header to the actual row width.
-function parseDatalogCsv(id: string, raw: string): ParsedDatalog {
-  const lines = raw
-    .split("\n")
-    .map((l) => l.replace(/\r$/, ""))
-    .filter((l) => l.length > 0);
-  if (lines.length === 0) return { id, columns: [], rows: [] };
-
-  const header = lines[0].split(",").map((s) => s.trim());
-  const dataLines = lines.slice(1);
-  if (dataLines.length === 0) return { id, columns: header, rows: [] };
-
-  const width = dataLines[0].split(",").length;
-  const columns = header.slice(0, width);
-  const rows = dataLines.map((line) => {
-    const parts = line.split(",");
-    const row = new Array<number>(width).fill(NaN);
-    for (let i = 0; i < width && i < parts.length; i++) row[i] = parseFloat(parts[i]);
-    return row;
-  });
-
-  return { id, columns, rows };
 }
 
 async function fetchDatalog(id: string, refresh = false): Promise<ParsedDatalog> {
@@ -273,51 +182,18 @@ async function fetchDatalog(id: string, refresh = false): Promise<ParsedDatalog>
   return parsed;
 }
 
-function splitColumn(col: string): { name: string; unit?: string } {
-  const m = col.match(/^(.*?)\s*\[(.*)\]$/);
-  return m ? { name: m[1], unit: m[2] } : { name: col };
-}
-
-function resolveColumn(datalog: ParsedDatalog, query: string): number {
-  const lq = query.toLowerCase();
-  const exact = datalog.columns.findIndex((c) => c.toLowerCase() === lq);
-  if (exact !== -1) return exact;
-
-  const matches = datalog.columns
-    .map((c, i) => ({ c, i }))
-    .filter(({ c }) => c.toLowerCase().includes(lq));
-
-  if (matches.length === 0) {
-    throw new Error(`No datalog column matching "${query}". Available: ${datalog.columns.join(", ")}`);
-  }
-  if (matches.length > 1) {
-    throw new Error(`"${query}" matches multiple columns, be more specific: ${matches.map((m) => m.c).join(", ")}`);
-  }
-  return matches[0].i;
-}
-
 function readHighlights(id: string): DatalogHighlight[] {
+  let raw: string;
   try {
-    return JSON.parse(fs.readFileSync(datalogHighlightsPath(id), "utf8")) as DatalogHighlight[];
+    raw = fs.readFileSync(datalogHighlightsPath(id), "utf8");
   } catch {
-    return [];
+    return []; // no highlights file yet
   }
+  return parseHighlights(raw);
 }
 
 function writeHighlights(id: string, highlights: DatalogHighlight[]): void {
-  fs.writeFileSync(datalogHighlightsPath(id), JSON.stringify(highlights, null, 2));
-}
-
-function buildTreeText(nodes: TreeNode[], indent = 0): string {
-  let s = "";
-  for (const node of nodes) {
-    s += `${"  ".repeat(indent)}[${node.name}] (${node.total})\n`;
-    for (const t of node.tables ?? []) {
-      s += `${"  ".repeat(indent + 1)}- ${t.name} | extId: ${t.extId}${t.units ? ` | ${t.units}` : ""}\n`;
-    }
-    s += buildTreeText(node.nodes ?? [], indent + 1);
-  }
-  return s;
+  fs.writeFileSync(datalogHighlightsPath(id), serializeHighlights(highlights));
 }
 
 const server = new McpServer({ name: "bootmod3", version: "1.0.0" });
@@ -885,11 +761,7 @@ server.tool(
     uid: z.string().describe("Highlight uid from add_datalog_highlight or list_datalog_highlights"),
   },
   async ({ id, uid }) => {
-    const highlights = readHighlights(id);
-    const filtered = highlights.filter((h) => h.uid !== uid);
-    if (filtered.length === highlights.length) {
-      throw new Error(`No highlight with uid "${uid}" found for datalog ${id}`);
-    }
+    const filtered = removeHighlight(readHighlights(id), uid, id);
     writeHighlights(id, filtered);
     return { content: [{ type: "text", text: `Deleted highlight ${uid}` }] };
   }
