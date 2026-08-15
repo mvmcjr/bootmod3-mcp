@@ -6,6 +6,10 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
+    // TypeScript 6.0 changed the default of "types" from auto-discovering
+    // every @types/* package to []. This project needs the Node globals
+    // (process) and the node: builtins, so "node" has to be named explicitly.
+    "types": ["node"],
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true
