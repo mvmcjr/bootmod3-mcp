@@ -9,9 +9,13 @@ for a BMW N20. It exposes 15 tools: 7 for maps and tables, 1 for comparing two
 maps, and 7 for OBD datalogs. See `docs/tools-architecture.html` for the shape of
 the whole thing.
 
-- `src/index.ts` — every tool registration, HTTP, and caching. Single file.
+- `src/index.ts` — every tool registration, HTTP, and file caching.
 - `src/compare.ts` — pure comparison logic, no I/O. Exists separately so it is testable.
-- `src/compare.test.ts` — `node:test`, 68 tests.
+- `src/datalog.ts` — pure CSV parsing, channel resolution, highlight (de)serialization.
+- `src/tree.ts` — the tabletree payload types plus `flattenNodes` / `buildTreeText`.
+- `src/*.test.ts` — `node:test`, 111 tests with a populated map cache (`compare` 68,
+  `datalog` 27, `tree` 16), plus 5 real-datalog invariants that run only when
+  `cache/datalogs` is populated.
 
 ```
 npm run build     # tsc → dist/
