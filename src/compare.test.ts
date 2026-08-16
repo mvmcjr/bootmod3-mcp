@@ -155,6 +155,14 @@ describe("resampleOntoAxes", () => {
     assert.equal(resampleOntoAxes([[1, 2]], [0, 1, 2], [0], [0], [0]), null);
   });
 
+  test("rejects an empty grid instead of dereferencing undefined", () => {
+    // An empty grid satisfies every other check vacuously: a zero-length axis
+    // is trivially monotonic and trivially matches a zero-row grid. Sampling it
+    // then threw a TypeError out of the whole comparison.
+    assert.equal(resampleOntoAxes([], [], [], [0, 1], [0]), null);
+    assert.equal(resampleOntoAxes([], [0, 1], [0], [0, 1], [0]), null);
+  });
+
   test("resamples a coarser grid onto a finer axis", () => {
     const out = resampleOntoAxes(
       [
@@ -550,6 +558,26 @@ describe("compareMaps value diffing", () => {
     assert.equal(r.counts.changed, 0);
     assert.equal(r.counts.incomparable, 1);
     assert.match(r.incomparable[0].reason ?? "", /axis kinds differ/);
+  });
+
+  test("a rows-less entry on the B side does not take down the whole comparison", () => {
+    // The mirror of the A-side case below. B reaching the resample path with an
+    // empty grid used to throw a TypeError out of compareMaps, failing every
+    // other table in the map along with it.
+    const a = makeMap("A", [
+      { extId: "E1", id: "KF_OK", grid: [[1]] },
+      { extId: "E2", id: "KF_BROKEN", grid: [[1, 2, 3]], xAxis: [0, 5, 10] },
+    ]);
+    const b = makeMap("B", [
+      { extId: "E1", id: "KF_OK", grid: [[2]] },
+      { extId: "E2", id: "KF_BROKEN", grid: [[9, 9, 9]], xAxis: [0, 6, 10] },
+    ]);
+    b.tableData.E2.rows = [];
+
+    const r = compareMaps(a, b);
+    assert.equal(r.counts.changed, 1);
+    assert.equal(r.changed[0].id, "KF_OK");
+    assert.equal(r.counts.incomparable, 1);
   });
 
   test("a table entry with no rows does not take down the whole comparison", () => {

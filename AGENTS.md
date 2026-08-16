@@ -13,9 +13,9 @@ the whole thing.
 - `src/compare.ts` — pure comparison logic, no I/O. Exists separately so it is testable.
 - `src/datalog.ts` — pure CSV parsing, channel resolution, highlight (de)serialization.
 - `src/tree.ts` — the tabletree payload types plus `flattenNodes` / `buildTreeText`.
-- `src/*.test.ts` — `node:test`, 111 tests with a populated map cache (`compare` 68,
-  `datalog` 27, `tree` 16), plus 5 real-datalog invariants that run only when
-  `cache/datalogs` is populated.
+- `src/*.test.ts` — `node:test`, 117 tests with a populated map cache, plus 5
+  real-datalog invariants that run only when `cache/datalogs` is populated.
+  Run `npm test` for the current count rather than trusting this line.
 
 ```
 npm run build     # tsc → dist/
@@ -104,9 +104,14 @@ They are easy to get wrong from first principles.
 
 - **`save_tables` writes to a real vehicle's tune.** It is not a sandbox. Do not
   call it to test something; use the cache. It is also the only cache invalidator.
-- The save endpoint can return HTTP 200 with a body that means failure. A genuine
-  success always has a `saveId` — `index.ts` treats a missing one as an error, and
-  that check should stay.
+- **Endpoints answer HTTP 200 with bodies that mean failure.** Two known cases,
+  both guarded, and both guards should stay:
+  - `save` returns 200 without a `saveId` when the save did not apply.
+  - `tabletree` returns `{"uid":1,"locked":true}` for a locked map. Caching that
+    made every tool fail on that map forever with "nodes is not iterable", since
+    the cache is only cleared by a successful save and a locked map cannot be
+    saved. `isTableTree` now rejects it on both the network and disk-read paths.
+  Assume any new endpoint does the same. Validate the shape before caching.
 - Datalog highlights are a local invention stored in `cache/datalogs/*.highlights.json`.
   No bootmod3 endpoint backs them.
 - Nothing in this project has been exercised against the live API by an agent so

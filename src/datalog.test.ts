@@ -5,6 +5,7 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 
 import {
+  isCorruptHighlightStore,
   parseDatalogCsv,
   parseHighlights,
   removeHighlight,
@@ -215,6 +216,26 @@ describe("highlight store core", () => {
     for (const raw of ["null", "{}", "5", '"a string"', "true"]) {
       assert.deepEqual(parseHighlights(raw), [], `expected [] for ${raw}`);
     }
+  });
+
+  test("a non-highlight element is dropped rather than reaching removeHighlight", () => {
+    // removeHighlight reads h.uid, so one null element in an otherwise valid
+    // array would throw a TypeError on delete.
+    assert.deepEqual(parseHighlights(JSON.stringify([null, one, 5])), [one]);
+  });
+
+  test("corruption is distinguished from emptiness, so only real data is preserved", () => {
+    // readHighlights renames the file aside when this is true. It must not fire
+    // for a legitimately empty store, or every read would move the file.
+    assert.equal(isCorruptHighlightStore(null), false);
+    assert.equal(isCorruptHighlightStore(""), false);
+    assert.equal(isCorruptHighlightStore("[]"), false);
+    assert.equal(isCorruptHighlightStore(serializeHighlights([one, two])), false);
+
+    assert.equal(isCorruptHighlightStore("{ truncated"), true);
+    assert.equal(isCorruptHighlightStore("null"), true);
+    assert.equal(isCorruptHighlightStore("{}"), true);
+    assert.equal(isCorruptHighlightStore(JSON.stringify([null, one])), true);
   });
 
   test("a corrupt store still accepts a new highlight instead of throwing", () => {

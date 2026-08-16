@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import { DEFAULT_TIERS, compareMaps, type CompareResult, type MatchTier, type TableDiff } from "./compare.js";
 import {
   parseDatalogCsv,
+  isCorruptHighlightStore,
   parseHighlights,
   removeHighlight,
   resolveColumn,
@@ -54,9 +55,25 @@ function isCached(mapId: string): boolean {
   return treeCache.has(mapId) || fs.existsSync(cachePath(mapId));
 }
 
+/**
+ * The tabletree endpoint answers HTTP 200 with a soft-rejection body for maps it
+ * will not serve — a locked map yields `{"uid":1,"locked":true}`. Casting that to
+ * TableTreeResponse and caching it makes every downstream tool fail on the same
+ * map forever with an unrelated message ("nodes is not iterable"), because the
+ * cache is only cleared by a successful save and a locked map cannot be saved.
+ * Same class of failure the save path already guards with its `saveId` check.
+ */
+function isTableTree(value: unknown): value is TableTreeResponse {
+  const t = value as TableTreeResponse | null;
+  return !!t && Array.isArray(t.nodes) && typeof t.tableData === "object" && t.tableData !== null;
+}
+
 function readDiskCache(mapId: string): TableTreeResponse | null {
   try {
-    return JSON.parse(fs.readFileSync(cachePath(mapId), "utf8")) as TableTreeResponse;
+    const parsed = JSON.parse(fs.readFileSync(cachePath(mapId), "utf8")) as unknown;
+    // Reject anything already poisoned by an earlier run so it refetches rather
+    // than failing forever on cached garbage.
+    return isTableTree(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -126,7 +143,14 @@ async function fetchTableTree(mapId: string): Promise<TableTreeResponse> {
 
   if (!res.ok) throw new Error(`tabletree ${res.status}: ${await res.text()}`);
 
-  const data = (await res.json()) as TableTreeResponse;
+  const data = (await res.json()) as unknown;
+
+  if (!isTableTree(data)) {
+    throw new Error(
+      `tabletree returned HTTP ${res.status} but the body is not a table tree — the map may be locked or unavailable. Not caching it. Body: ${JSON.stringify(data).slice(0, 500)}`
+    );
+  }
+
   treeCache.set(mapId, data);
   writeDiskCache(mapId, data);
   return data;
@@ -189,6 +213,21 @@ function readHighlights(id: string): DatalogHighlight[] {
   } catch {
     return []; // no highlights file yet
   }
+
+  // A corrupt store reads as empty so the tool call still succeeds — but the
+  // next write would truncate it, and nothing on the server can restore
+  // highlights. Move the unreadable file aside before that can happen.
+  if (isCorruptHighlightStore(raw)) {
+    const from = datalogHighlightsPath(id);
+    const to = `${from}.corrupt`;
+    try {
+      fs.renameSync(from, to);
+      process.stderr.write(`[bootmod3] unreadable highlights for ${id} preserved at ${to}\n`);
+    } catch (e) {
+      process.stderr.write(`[bootmod3] could not preserve unreadable highlights for ${id}: ${e}\n`);
+    }
+  }
+
   return parseHighlights(raw);
 }
 
@@ -568,7 +607,12 @@ server.tool(
       );
       if (changed.length > maxTables) out.changedTruncated = `${changed.length - maxTables} more changed tables not shown`;
 
-      if (incomparable.length > 0) out.incomparable = incomparable.slice(0, maxTables).map(tableDiffSummary);
+      if (incomparable.length > 0) {
+        out.incomparable = incomparable.slice(0, maxTables).map(tableDiffSummary);
+        if (incomparable.length > maxTables) {
+          out.incomparableTruncated = `${incomparable.length - maxTables} more incomparable tables not shown`;
+        }
+      }
     }
 
     if (includeUnmatched) {

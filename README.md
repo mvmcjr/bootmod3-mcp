@@ -192,8 +192,10 @@ npm run dev       # tsc --watch
 npm test          # build, then run the test suite
 ```
 
-68 tests. `src/compare.ts` is pure and has no I/O, which is what makes it
-testable; everything touching the network or filesystem lives in `src/index.ts`.
+117 tests. The pure logic lives in `src/compare.ts` (map diffing), `src/datalog.ts`
+(CSV parsing, channel resolution) and `src/tree.ts` (tabletree types and
+traversal) — none of them touch `fs` or `fetch`, which is what makes them
+testable. Everything that does I/O stays in `src/index.ts`.
 
 Tests run against both synthetic fixtures and real cached maps. The cached-map
 tests skip automatically when `cache/` is empty, so a fresh clone passes — but if

@@ -84,7 +84,31 @@ export function parseHighlights(raw: string | null | undefined): DatalogHighligh
   // unchecked would hand a non-array to callers that push to it and read its
   // length — a truncated file containing `null` parses cleanly and then throws
   // a TypeError deep inside the tool handler.
-  return Array.isArray(parsed) ? (parsed as DatalogHighlight[]) : [];
+  if (!Array.isArray(parsed)) return [];
+  // Drop entries that aren't highlight-shaped for the same reason: removeHighlight
+  // reads `h.uid`, so a single `null` element in an otherwise valid array throws.
+  return parsed.filter(
+    (h): h is DatalogHighlight => !!h && typeof h === "object" && typeof (h as DatalogHighlight).uid === "string"
+  );
+}
+
+/**
+ * True when `raw` held content that did not survive parsing — i.e. the store is
+ * corrupt rather than merely empty. Callers that are about to overwrite the file
+ * use this to preserve the original first: highlights exist nowhere else, so a
+ * silent overwrite is unrecoverable data loss.
+ */
+export function isCorruptHighlightStore(raw: string | null | undefined): boolean {
+  if (raw === null || raw === undefined) return false;
+  if (raw.trim() === "") return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return true;
+  }
+  if (!Array.isArray(parsed)) return true;
+  return parsed.length !== parseHighlights(raw).length;
 }
 
 export function serializeHighlights(highlights: DatalogHighlight[]): string {

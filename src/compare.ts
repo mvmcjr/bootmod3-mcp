@@ -360,6 +360,10 @@ export function resampleOntoAxes(
   aXAxis: number[],
   aYAxis: number[]
 ): number[][] | null {
+  // An empty grid passes every check below vacuously — a zero-length axis is
+  // trivially "monotonic" and trivially matches a zero-row grid — and then
+  // sampling it dereferences undefined. Reject it up front.
+  if (bGrid.length === 0 || bXAxis.length === 0 || bYAxis.length === 0) return null;
   if (bGrid.length !== bYAxis.length) return null;
   if (bGrid.some((r) => r.length !== bXAxis.length)) return null;
   if (isStrictlyMonotonic(bXAxis) === 0 || isStrictlyMonotonic(bYAxis) === 0) return null;
