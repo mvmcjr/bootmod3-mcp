@@ -208,6 +208,23 @@ describe("highlight store core", () => {
     assert.deepEqual(parseHighlights("{ truncated"), []);
   });
 
+  test("valid JSON that is not an array also reads as no highlights", () => {
+    // A file truncated to `null`, or hand-edited into an object, parses cleanly.
+    // Passing it through would hand a non-array to add_datalog_highlight, which
+    // pushes to it, and to list_datalog_highlights, which would print `null`.
+    for (const raw of ["null", "{}", "5", '"a string"', "true"]) {
+      assert.deepEqual(parseHighlights(raw), [], `expected [] for ${raw}`);
+    }
+  });
+
+  test("a corrupt store still accepts a new highlight instead of throwing", () => {
+    // The regression this guards: the result of parseHighlights is pushed to
+    // directly by the add_datalog_highlight handler.
+    const recovered = parseHighlights("null");
+    recovered.push(one);
+    assert.deepEqual(recovered, [one]);
+  });
+
   test("serialize then parse round-trips the records unchanged", () => {
     assert.deepEqual(parseHighlights(serializeHighlights([one, two])), [one, two]);
   });

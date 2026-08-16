@@ -74,11 +74,17 @@ export function resolveColumn(datalog: ParsedDatalog, query: string): number {
  */
 export function parseHighlights(raw: string | null | undefined): DatalogHighlight[] {
   if (raw === null || raw === undefined) return [];
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as DatalogHighlight[];
+    parsed = JSON.parse(raw);
   } catch {
     return [];
   }
+  // Valid JSON that isn't an array is still a corrupt store. Returning it
+  // unchecked would hand a non-array to callers that push to it and read its
+  // length — a truncated file containing `null` parses cleanly and then throws
+  // a TypeError deep inside the tool handler.
+  return Array.isArray(parsed) ? (parsed as DatalogHighlight[]) : [];
 }
 
 export function serializeHighlights(highlights: DatalogHighlight[]): string {
